@@ -1,0 +1,22 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: LibsTN module
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: F.D.
+    family-names: Messack
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.15712687
+repository-code: 'https://github.com/Kizerbyte/Libs.tn'
+abstract: >-
+  Gegeneraliseerd script voor data-extractie en verwerking
+  bij TN aan de HHS Delft
+license: MIT
+version: v1.0
+date-released: '2025-06-21'
