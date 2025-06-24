@@ -33,5 +33,8 @@ Als je wilt weten welke functies er in het bestand zitten, run tn.py voor een li
 help(tn.<functie>)
 ```
 P.S.
+
 Voor het wisselen van punten en comma's zoals het hoort in Nederlandse notatie, gebruik de TIS-TN module op https://github.com/ddland/TIS-TN-python-code.
 Je kan dan spelen met de tn.Reglabelmaker() functie en het aanpassen.
+
+Ook is de aansturing van de MMTTi 1604 erg nuttig, zie https://github.com/ddland/PythonCode/tree/main/tti1604
