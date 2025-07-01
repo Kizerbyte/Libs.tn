@@ -1,30 +1,47 @@
 """
-Kleine module met functies die mij teveel tijd hebben gekost.
-Om het te gebruiken in andere bestanden zie de voorbeeldbestanden die
-meegegeven zijn.
-Floris Messack, HHS : 2023
+Floris Messack, HHS : 2023.
+
+Kleine module met functies die mij teveel tijd hebben gekost, maar ook veel
+tijd hebben bespaard tijdens data-analyse.
+Hoe het te gebruiken? Zie de voorbeeldbestanden die meegegeven zijn.
+Download : https://github.com/Kizerbyte/Libs.tn
+S.O. naar J. van Tol voor de openbaring van het onzekerheidsinterval.
+Zie: uncertainty_range()
 """
 
 import math
 import re as re2  # naming overlap (extracting_variables functie)
 import string  # extracting_variables
 import sys  # Voor de abort functie bij een error
+import warnings  # Voor error handling van de ODR fit
 from pathlib import Path  # voor vinden van downloads folder
+
 
 import numpy as np
 import pandas as pd  # Voor het inlezen van de excel
-from scipy.odr import Model
-from scipy.odr import ODR
-from scipy.odr import RealData
-from scipy.optimize import curve_fit  # Voor de standaard curvefit
+from scipy.optimize import curve_fit, OptimizeWarning
 from sympy import diff  # Voor het onzekerheidsgebied van de functie
+from sympy import lambdify
 from sympy import Matrix
 from sympy import re
+from scipy.optimize import minimize
+from scipy.optimize import approx_fprime
 from sympy import symbols
 from sympy import sympify
 
 
-ManualError = 1  # error handling
+class ManualError(Exception):
+    """Handmatige class voor het oproepen van fouten.
+
+    Hierdoor kan je de tree zien en zelf debuggen door te klikken op de groene
+    filepaths in de error
+    """
+
+    def __init__(self, *args):
+        message = " ".join(str(arg) for arg in args)
+        super().__init__(message)
+
+
 """ ##############################################
                                                         Importeer module met:
                                                         from Libs import tn
@@ -38,7 +55,7 @@ ManualError = 1  # error handling
 """
 
 
-def lees_bestand(file, sheet="Sheet1", cols=["U", "I"], debug=0):
+def lees_bestand(file, sheet="Sheet1", cols=["U", "I"], debug=False):
     """
     Kolommen uit een excelsheet halen en omzetten in een werkbare dictionary.
 
@@ -51,73 +68,89 @@ def lees_bestand(file, sheet="Sheet1", cols=["U", "I"], debug=0):
         Default is 'Sheet1'
     cols : str, list
         Één of meer kolomtitels (Default = ['U', 'I'])
-    debug : int (opt)
-        1 of 0 als je de volledige pandas dataframe wilt van de excel
+    debug : bool
+        Zet True als je de volledige pandas dataframe wilt van de excel
 
     Returns
     -------
-    dict : (def)
+    Kolommen : dict
         Opgevraagde kolommen als één numpy dictionary
-    dict : (opt)
+    Excel : df (wanneer debug=True)
         De volledige pandas dataframe van de excel en de NaN-count per kolom
     """
-    file = Path(file)
-    file_downl = Path(f"{Path.home()}/Downloads/{file}")
 
-    for thefile in [file, file_downl]:  # Bestandsfolder heeft voorrang
-        if thefile.is_file():
-            Excel = pd.read_excel(thefile, sheet)
-            print(f"\nBestand {thefile} gevonden!")
-            break
-    else:
-        print(
-            f"\nBestand niet gevonden in dezelfde folder of in "  # noqa
-            + f"{Path.home()}\\Downloads !\nAborted script",  # noqa
-        )  # noqa
-        sys.exit()  # abort code
+    def vind_bestand(path, file):  # Return dataframe alleen indien gevonden
+        p = Path(path / file)
+        if p.is_file():
+            Excel = pd.read_excel(p, sheet)
+            print(f"\nBestand gevonden! {path}\\{file} ")
+            print(
+                "Zoekend naar kolom"
+                + ("men" if len(cols) > 1 else "")  # Is mooi
+                + f" {cols} in '{sheet}'...",
+                end="",
+            )
+            if not debug:
+                return zoek_kolom(Excel, cols)
+            else:
+                return zoek_kolom(Excel, cols, debug=True), Excel
 
-    print(f"Zoekend naar kolom(men) {cols} in sheet: '{sheet}'...")
+    pathlist = [
+        Path(sys.argv[0]).resolve().parent,  # Folder van script dat m oproept
+        Path.home() / "Downloads",  # Donwloadsfolder
+        Path.cwd(),  # Working directory (zie de path rechtsbovenin in Spyder)
+    ]
 
-    if debug == 1:
-        return zoek_kolom(Excel, cols, 1), Excel
-    else:
-        return zoek_kolom(Excel, cols)
+    for pad in pathlist:
+        Excel_df = vind_bestand(pad, file)
+        if Excel_df is not None:
+            return Excel_df
+
+    # Gaat verder bij falen van pathfinding
+    print(
+        "\nBestand niet gevonden in scriptfolder, downloadsfolder of working",
+        f"directory.\nWorking directory: {Path.cwd()}\nAborted script.",
+    )
+    sys.exit()
 
 
-def zoek_kolom(diction, col, debug=0):
+def zoek_kolom(dataframe, kolommen, debug=False):
     """
     Kolommen vinden in een panda's df en vertalen naar Numpy, met errorfunctie.
 
     Parameters
     ----------
-    dictionary : dict
-        De dictionary waarin gezocht moet worden
-    col : str
+    dataframe : df
+        De dataframe waarin gezocht moet worden
+    kolommen : str
         kolomtitel(s) die gezocht moet(en) worden
-    debug : (int)
-        1 of 0 als je de wilt weten hoeveel NaNs
+    debug : bool
+        Zet True als je de wilt weten hoeveel NaNs
 
     Returns
     -------
     newdict : dict
         met specifiek die kolommen
-    print (opt)
+    print (wanneer debug=True)
         NaN count
     """
     newdict = {}
-    for column in col:
+    for col in kolommen:
         try:
             # Zoek de kolom met metingen en creëer een dict entry met deze data
-            newdict.update({column: diction[column].dropna().to_numpy()})
-            if (diction[column].isnull().values.sum() != 0) and (debug == 1):
+            newdict.update({col: dataframe[col].dropna().to_numpy()})
+            if debug and (dataframe[col].isnull().values.sum() != 0):
                 print(
-                    "-debug- Kolom '{}' bevat {} NaN(s)".format(
-                        column,
-                        diction[column].isnull().values.sum(),
+                    "\n-debug- Kolom '{}' bevat {} NaN(s)".format(
+                        col,
+                        dataframe[col].isnull().values.sum(),
                     ),
+                    end="",
                 )
         except KeyError:
-            print(f"Kolom '{column}' niet gevonden!\n")
+            print(f"\n\nKolom '{col}' niet gevonden!")
+            sys.exit()
+    print("\u2705")  # checkmark
     return newdict
 
 
@@ -163,16 +196,12 @@ def sci_error(number, sig_number, sci_bucket=[4, -2]):
             numpow = math.floor(np.log10(abs(number)))
             n = 1
             sigpow = math.floor(np.log10(abs(sig_number)))
-        except OverflowError as er:
-            print(
-                "\nERROR:",
-                er,
-                "\nEr is een 'inf' gegeven als "
-                + ("meetwaarde" if n == 0 else "onzekerheid")
-                + " voor significantie afronding. "
-                + "Check de input voor deze functie. \n",
-            )
-            raise ManualError
+        except OverflowError:
+            raise ManualError(
+                "Afrondingsfout: Er is 'inf' gegeven als",
+                ("meetwaarde" if n == 0 else "onzekerheid"),
+                "bij afronding. Check de inputdata voor deze functie. \n",
+            ) from None
     elif number == 0:  # Bij een nul moet ie niet kutten
         return "0"
     else:
@@ -180,12 +209,10 @@ def sci_error(number, sig_number, sci_bucket=[4, -2]):
 
     power = numpow - sigpow  # the difference of orders
     if power < 0:
-        print(
-            f"\nSignificantie error: De onzekerheid {sig_number:.3e} is te "
-            + f"groot voor de gegeven meetwaarde van {number:.3e} !\n",
+        raise ManualError(
+            f"Afrondingsfout: Meetwaarde {number:.3e} is kleiner dan",
+            f"onzekerheid {sig_number:.3e} ! Check p0",
         )
-
-        raise ManualError
     ret_string = "{0:.{1:d}e}".format(number, power)
     a, b = ret_string.split("e")
 
@@ -238,11 +265,6 @@ def Reglabelmaker(formula, popt, perr, full_label=True):
         .replace("\\cdot pi", "\\pi")
         .replace(r" pi", "\\pi")
     )
-    # except AttributeError:
-    #     print(
-    #         "ERROR: De fitfunctie is incorrect ingevoerd, gebruik spaties!\n"
-    #     )
-    #     sys.exit()
     if full_label:
         return r"Regressie %s: $y = " + rstring_formula + "$"  # noqa
     else:
@@ -325,17 +347,11 @@ def extract_variables(
     # If replace_values is True, substitute the variables with popt[]
     if replace_with_values:
         if popt is None:
-            raise ValueError(
-                "Parameter values must be provided",
-                "if replace_with_values=True.",
-            )
+            raise ValueError("⚠️ replace_with_values=True vereist waarden")
 
         # Check if number of values matches number of variables (excluding 'x')
         if len(popt) != len(mapping) - 1:
-            raise ValueError(
-                "The number of values given does",
-                "not match the number of parameters.",
-            )
+            raise ValueError("Het aantal parameters komt niet overeen met p0")
 
         # Map variables to values
         var_value_dict = {
@@ -408,7 +424,7 @@ def check_for_parameters(p0, formula):
     return not missing and not extra
 
 
-def set_function_shape(formula, ODR=False):
+def set_function_shape(formula):
     """Define the shape of the callable function.
 
     Uses the given formula to create a callable function of shape
@@ -429,29 +445,34 @@ def set_function_shape(formula, ODR=False):
     # Extract variable names
     vars = parameter_list(formula)
     vars.remove("x")
-    vars.insert(0, "x")
+    vars.insert(0, "x")  # x als eerste in de rij
 
-    safe_globals = {"np": np, "math": math}
+    # Eval function calls limiteren aan de safe_globals. Is sneller en veiliger
+    safe_globals = {
+        "np": np,
+        "math": math,
+        "sin": np.sin,
+        "cos": np.cos,
+        "tan": np.tan,
+        "exp": np.exp,
+        "log": np.log,
+        "sqrt": np.sqrt,
+        "pi": np.pi,
+        "abs": np.abs,
+    }
+    # Alle varianten van log_n(x) herschrijven
+    formula = re2.sub(r"log(\d+(?:\.\d+)?)\(", r"(1/log(\1))*log(", formula)
 
-    if ODR:
-        return lambda beta, x: eval(
-            formula,
-            safe_globals,
-            {**dict(zip(vars[1:], beta)), "x": x},
-        )
+    def model(x, *beta):
+        x = np.asarray(x, dtype=np.float64)
+        # unpack beta if it's a single list/array
+        if len(beta) == 1 and isinstance(beta[0], (list, np.ndarray)):
+            beta = beta[0]
+        local_vars = dict(zip(vars[1:], beta))
+        local_vars["x"] = x
+        return eval(formula, safe_globals, local_vars)
 
-    def func(x, *beta):
-        if isinstance(
-            beta[0],
-            np.ndarray,
-        ):  # If beta[0] is an array inside a tuple
-            beta = beta[0]  # Extract the array directly
-
-        local_dict = dict(zip(vars[1:], beta))
-        local_dict["x"] = x
-        return eval(formula, safe_globals, local_dict)
-
-    return func
+    return model
 
 
 # %% Extra dataverwerking
@@ -473,16 +494,28 @@ def plot_confidence_band(
     N=1000,
 ):
     """
-    Plots a 3 sigma confidence band using Monte Carlo simulation.
+    Plot een 3σ intervalgebied rondom popt data via Monte Carlo-simulatie.
 
-    Parameters:
-        ax      : figure nameselection
-        func    : Callable. Must accept (p1, p2, ..., x) and return an array.
-        popt    : List or array of best-fit parameters [p1, p2, ...].
-        perr    : List or array of 1-sigma uncertainties [dp1, dp2, ...].
-        x_vals  : Array of x values to evaluate the function over.
-        colour  : String. Chooses the colour of the plot.
-        N       : Number of Monte Carlo samples (default 1000).
+    Voor elke van de N iteraties worden parameters willekeurig gekozen volgens
+    een normale verdeling (rond popt met standaardafwijking perr). Hiermee
+    wordt het model geëvalueerd en ontstaat een spreiding van uitkomsten per x-
+    waarde.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+    func : callable
+        de functie, van de vorm hebben van set_function_shape().
+    popt : array-like
+    perr : array-like
+    x_vals : array-like
+        De x-waarden waarover de functie geëvalueerd en geplot wordt.
+    formulastring : str
+        String met de oorspronkelijke formule, voor automatische labelgeneratie
+        via Reglabelmaker().
+    colour : str
+    N : int
+        Aantal Monte Carlo-simulaties.
     """
     popt = np.array(popt)
     perr = np.array(perr)
@@ -586,11 +619,9 @@ def MMTTi_1604_error(meetdata, UI="U"):
                 abs(data) * accuracy_value + n_o_digits * resolutie_value
             )
         except UnboundLocalError:
-            print(
-                "Value %s=%d is out of range for the MMTTi, " % (UI, data)
-                + "data is incorrect.",
+            raise ManualError(
+                "⚠️ %s=%d is buiten het bereik van de MMTTi" % (UI, data),
             )
-            sys.exit()
 
         data_error_rounded = round_up(data_error)
 
@@ -620,16 +651,16 @@ def MMTTi_1604_error(meetdata, UI="U"):
                 meetdata_err["err_" + kolom][i] = MMTTi_error(meting, kolom)
         return meetdata_err
     else:
-        raise TypeError(
-            "MMTTi didnt receive workable instance, use int, dict or list."
-            " Received %s" % type(meetdata),
+        raise ManualError(
+            "MMTTi_1604_error() verwacht een int, dict of list.",
+            "Ontving %s" % type(meetdata),
         )
 
 
 # %% Dataverwerking subfuncties
 """
 #################
-#######################      Subfuncties     #################################
+#######################      De fits     #################################
 #########
 """
 
@@ -638,13 +669,23 @@ def uncertainty_range(formula, popt, pcov, Xspace):
     """3sigma interval met SymPy, accepteert een variabel aantal parameters(!).
 
     Stappenplan:
-        Haalt de variabelen uit de formule en hernoemt ze a-z
+        Haalt de variabelen uit de formule en hernoemt ze a-w (voor SymPy)
         definiëert x als variabele, rest als parameters
-        Fixt wat standaard syntax-moeilijkheden.
-        Doet partiële differentiatie van de formule t.o.v. elke parameter.
-        Creëert een gradiëntmatrix van alle parameters. Daarna ben ik het
-        vergeten, iets met de covariantiematrix en dan over de hele linspace.
-        Geeft het onzekerheidsgebied terug.
+        Fixt een aantal standaard syntax-moeilijkheden.
+        Neemt de partiëel afgeleide van de functie naar elke parameter in een
+        matrix (gradiëntmatrix). Dit laat zien wat de afhankelijkheid is t.o.v.
+        elke parameter.
+
+        Voor optimalisatie schrijft het elke part.afg. als een lambda functie.
+        Daarna in een forloop van elk punt op de linspace, vult het de x & popt
+        in en berekent het numeriek de afgeleide van elke partiëel afgeleide.
+        Samen met de covariantiematrix (pcov van de fit) wordt de std.dev
+        uitgerekend bij elk punt en vastgelegd in XspaceErr[i]
+
+        Uitkomst is een gewogen onzekerheid afhankelijk van lokale
+        meetpuntonzekerheid en meetpuntkwantiteit.
+        Dus een puntverdeling als een longitudinale golf, zorgt ook voor een
+        dubbel-sinusoïdaal gebied in XspaceErr
 
     Parameters
     ----------
@@ -653,131 +694,296 @@ def uncertainty_range(formula, popt, pcov, Xspace):
         popt : list
             Optimale parameters van de voorafgaande fit
         pcov : 2D-list
+            Covariantiematrix van de fitparameters
     Returns
     -------
         XspaceErr : list
-            De grootte van de afwijking van de fit over de linspace
+            Het onzekerheidsinterval van de fit over de linspace
     """
-    param_string = extract_variables(formula)  # "a b x" used for symbols()
-    param_names = param_string.split()  # ['a', 'b', 'x'] used for making dict
+    param_string = extract_variables(formula)  # "a0 a1 x" used for symbols()
+    param_keys = param_string.split()  # Create the key names for making dict
 
-    # Convert all variable names to sympy symbols
-    symbol_list = symbols(param_string)  # (a, b, x)   # Now defined as symbols
-    symbol_dict = dict(zip(param_names, symbol_list))  # For quick expr cleanup
+    # Alle parameters definiëren als symbolen in SymPy
+    symbol_list = symbols(param_string)  # (a0, a1, x) --> sympy-type object
+    symbol_dict = dict(zip(param_keys, symbol_list))  # ('a0':a0) voor oproepen
 
-    x_symbol = symbol_dict["x"]
+    x_symbol = symbol_dict["x"]  # pointer naar x als sympy-type object
 
-    # Speciale functies zoals sin, exp, log10 naar sympy krijgen
+    # Speciale functies zoals sin, exp, log_n() herschrijven voor SymPy
     clean_formula = (
         re2.sub(r"log(\d+(?:\.\d+)?)\(", r"(1/log(\1))*log(", formula)
         .replace("math.", "")
         .replace("np.", "")
     )
-    # Sympify the expression
+    # De formule overhandigen aan SymPy (Symbolic Python)
     sympy_expr = sympify(clean_formula, locals=symbol_dict)
-    # Compute gradient (partial derivatives w.r.t. each parameter except x)
-    param_symbols = [symbol_dict[v] for v in param_names if v != "x"]
+
+    # Creëer een lijst met elk sympy-symbol behalve die met de 'x'-key
+    param_symbols = [symbol_dict[v] for v in param_keys if v != "x"]
+
+    # Gradiënt berekenen (partiëel afleiden i.v.t. elke parameter in de lijst)
     grad = Matrix([diff(sympy_expr, p) for p in param_symbols])
 
-    XspaceErr = np.zeros(len(Xspace))  # Array pre-allocation
+    XspaceErr = np.zeros(len(Xspace))  # Array pre-allocation voor snelheid
+    # Gradiëntmatrix met formulae oplossen buiten de loop -> lambda functie
+    grad_func = lambdify([x_symbol] + param_symbols, grad, modules="numpy")
 
     for i, Xs in enumerate(Xspace):
-        subs_dict = {x_symbol: Xs}
-        subs_dict.update({p: val for p, val in zip(param_symbols, popt)})
-        gradient = grad.subs(subs_dict).evalf()
-        gradient_np = np.array(gradient).astype(np.float64).squeeze()
+        gradient_np = (
+            np.array(grad_func(Xs, *popt)).astype(np.float64).squeeze()
+        )
         XspaceErr[i] = math.sqrt(gradient_np @ pcov @ gradient_np.T)
     return XspaceErr
 
 
-def MonteCarlocurvefit(formula, Xdata, Ydata, Xerr, Yerr, p0, runs=1000):
+def fit_rating(model_func, X, Y, Yerr, popt):
+    """Beoordeel fitkwaliteit op basis van gemiddelde σ-afwijking en χ².
+
+    Parameters
+    ----------
+        model_func : function
+            De gefitte functie: f(x, *popt)
+        X : array-like
+            Onafhankelijke variabele (x-data)
+        Y : array-like
+            Afhankelijke variabele (y-data)
+        Yerr : array-like
+            Meetfouten (1σ onzekerheid per y-punt)
+        popt : array-like
+            Gefitte parameters
+
+    Returns
+    -------
+        dict met chi2, chi2_red, avg_sigma
+    """
+    resid = Y - model_func(X, *popt)
+    norm_res = resid / Yerr
+
+    chi2 = np.sum(norm_res**2)
+    dof = len(Y) - len(popt)
+    chi2_red = chi2 / dof if dof > 0 else np.nan
+    avg_sigma = np.sqrt(np.mean(norm_res**2))
+
+    # Beoordeling obv σ-afwijking
+    if avg_sigma < 0.5:
+        print(
+            "\n⚠️  Fit te mooi om waar te zijn.",
+            "Mogelijk overfitting (teveel parameters) of te coulante fouten",
+        )
+    elif avg_sigma <= 1.0:
+        print("\n⭐  Top fit, komt overeen met meetfouten.")
+    elif avg_sigma <= 1.5:
+        print(
+            "\n✔️  Prima fit, maar valt tussen de onzekerheden.",
+            "(Te strakke meetfouten?)",
+        )
+    elif avg_sigma < 2:
+        print(
+            "\n❌ Twijfelachtige fit,",
+            "slecht model of meetfouten waarschijnlijk te strak.",
+        )
+    else:
+        print(
+            "\n❌ Slechte fit o.b.v. meetfouten.",
+            "(Een verkeerd/onderfit model of verzonnen meetfouten?)",
+        )
+
+    print(f"    Gem. afstand tot fit : {avg_sigma:.2g}σ")
+    print(f"    χ²                   : {chi2:.2f}")
+    print(f"    χ²_red (DOF={dof})      : {chi2_red:.2f}")
+
+    return {"chi2": chi2, "chi2_red": chi2_red, "avg_sigma": avg_sigma}
+
+
+def MonteCarlocurvefit(
+    model_function, Xdata, Ydata, Xerr, Yerr, p0, runs=1000
+):
     """Monte Carlo Curve fitting.
 
     Normale curvefit maar met gesimuleerde data obv onzekerheid.
+    'Wat als ik de meting 1000x zou herhalen waar de fout in de x-as de
+    normaalverdeling is van de verschuiving'
     """
-    model_function = set_function_shape(formula)  # Creates a workable function
-    popt_samples = []  # Introducing list
+    popt_samples = np.zeros((runs, len(p0)))  # Pre-allocation
+    valid_count = 0  # Hiermee skipt ie gefaalde fits
+    Xdata = np.asarray(Xdata)  # Pre-conversie (optimalisatie)
+    Ydata = np.asarray(Ydata)
+    Xerr = np.asarray(Xerr)
+    Yerr = np.asarray(Yerr)
 
     print("\nData genereren op basis van de meetfouten:")
+
     for i in range(runs):
-        # Perturb both x and y based on their respective uncertainties
+        if (i + 1) % (runs / 20) == 0:  # Statische laadbar per 1/20e iteraties
+            filled = int((i + 1) / runs * 20)
+            bar = "[" + "|" * filled + "." * (20 - filled) + "]"
+            print(f"\r{bar} {i+1}/{runs}", end="", flush=True)
+
         Xperturbed = Xdata + np.random.normal(0, Xerr)
         Yperturbed = Ydata + np.random.normal(0, Yerr)
 
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", OptimizeWarning)
+            warnings.simplefilter("ignore", RuntimeWarning)
         try:
-            print(f"\r{i+1}/{runs}  ", end="")  # Static loading bar
             popti, _ = curve_fit(model_function, Xperturbed, Yperturbed, p0=p0)
-            if len(popti) == len(p0):  # Keeps out addressing errors
-                popt_samples.append(popti)
-        except (RuntimeError, TypeError):
-            # Skip fits die niet convergeren
-            continue
+            popt_samples[valid_count] = popti
+            valid_count += 1  # Update positie voor volgende fit
+        except (RuntimeError, TypeError, ValueError):
+            continue  # Skip fits die niet convergeren
 
-    popt_samples = np.array(popt_samples)
+    popt_samples = popt_samples[:valid_count]  # Snijd de lijst af bij skips
 
     popt = np.mean(popt_samples, axis=0)
     pcov = np.cov(popt_samples, rowvar=False)
     perr = np.std(popt_samples, axis=0)  # De fout in de parameters
 
-    print("\n\npopt:", popt)
-    print("perr:", perr)
-    # print("pcov:\n", pcov)
-
-    #########################
-    return model_function, popt, pcov, perr
-
-
-def ODRcurvefit(formula, Xdata, Ydata, Xerr, Yerr, p0):
-    """Orthogonal Distance Regression Curve fitting."""
-    # Improve the p0 guess to better chances of good fit.
-    model_function = set_function_shape(formula, ODR=False)
-    popt, _ = curve_fit(model_function, Xdata, Ydata, p0=p0)
-
-    print("Initial p0:", p0)
-    print("Scipy.curve_fit p0:", popt)
-
-    # Preparing ODR fit
-    model_function = set_function_shape(formula, ODR=True)
-    data = RealData(Xdata, Ydata, Xerr, Yerr)  # Creating the dataset
-    model = Model(model_function)
-
-    odr = ODR(data, model, beta0=popt)  # Defining the fit
-
-    odr.set_job(fit_type=2)  # Setting to real ODR
-    output = odr.run()
-
-    pcov = output.cov_beta  # Covariance matrix
-    perr = np.sqrt(np.diag(pcov))  # Error in the parameters
-    popt = output.beta  # Optimal parameters (fit)
-
-    print("Converged?", output.info, "tries")  # nr of tries
-    # If pcov is [[0,0],[0,0]], then it's probably correlated
-    # print("Covariance:", pcov)
-    print("Beta:", popt)
-
-    return model_function, popt, pcov, perr
-
-
-def LeastSquarescurvefit(formula, Xdata, Ydata, Xerr, Yerr, p0):
-    """Ordinary SciPy Curvefitting."""
-    # ########### Xerr is omitted  ###########
-
-    model_function = set_function_shape(formula, ODR=False)
-
-    popt, pcov = curve_fit(
-        model_function,
-        Xdata,
-        Ydata,
-        p0=p0,
-        sigma=Yerr,
-        absolute_sigma=True,
-    )
-
-    # Standard Deviation
-    perr = np.sqrt(np.diag(pcov))
+    rating = fit_rating(model_function, Xdata, Ydata, Yerr, popt)
     print("\npopt:", popt)
     print("perr:", perr)
-    return model_function, popt, pcov, perr
+
+    return popt, pcov, perr, rating
+
+
+def ODRcurvefit(
+    model_function,
+    Xdata,
+    Ydata,
+    Xerr,
+    Yerr,
+    p0,
+    n_starts=10,
+    perturb_scale=0.5,
+):
+    """Handmatige Orthogonal Distance Regression code.
+
+    Ter vervanging van scipy.ODR ivm bizarre instabiliteit en slechte debug
+    kwaliteiten. Dit gebruikt scipy.optimize.minimize. Dankjewel Chat (!)
+
+    Dit model weegt X en Y even sterk en is zwaar om te berekenen. Wanneer er
+    lineaire afhankelijkheid is tussen parameters, kan het een lokaal minimum
+    opleveren van dx^2 +dy^2. De code gebruikt multi-start om dit te verhelpen.
+
+    Gebruik methode 1 of 2 voor gewone/lineaire fits. Hier haal je pas wat uit
+    bij nonlineaire functies of kleine datasets waar elk meetpunt zwaar telt.
+
+
+    n_starts        : int
+        Aantal pogingen bij multi-start
+    perturb_scale   : float
+        Factor van de normaalverdeling std.dev van de ruis voor multi-start.
+        Als de fit slecht gaat door vele minima, kan dit naar 1.0+
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", OptimizeWarning)
+        warnings.simplefilter("ignore", RuntimeWarning)
+        try:
+            popt_cf, _ = curve_fit(model_function, Xdata, Ydata, p0=p0)
+        except (RuntimeError, ValueError, FloatingPointError) as err:
+            warnings.warn(
+                f"curve_fit faalde: {err}. Gebruik originele p0.",
+                RuntimeWarning,
+            )
+            popt_cf = p0
+
+    print("\nHandmatige p0:", p0)
+    print("Curve_fit p0:", [float(f"{v:.4g}") for v in popt_cf])
+
+    def loss_given_p0(p0_used):
+        p0_combined = np.concatenate([p0_used, Xdata])
+
+        def orthogonal_loss(p_combined):
+            params = p_combined[: len(p0_used)]
+            x_perturbed = p_combined[len(p0_used) :]  # noqa
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                y_model = model_function(x_perturbed, *params)
+            # Check output voor inf of nan
+            if not np.all(np.isfinite(y_model)):
+                return 1e20  # Grote waarde als penalty aka vermijd dit pad
+
+            dx = (x_perturbed - Xdata) / Xerr
+            dy = (y_model - Ydata) / Yerr
+            return np.sum(dx**2 + dy**2)
+
+        result = minimize(orthogonal_loss, p0_combined, method="L-BFGS-B")
+        return result
+
+    # Multi-start logic
+    best_result = None
+    best_loss = np.inf
+
+    for i in range(n_starts):
+        # Laadbalk elke 1/20e van de voortgang
+        if (i + 1) % max(1, n_starts // 20) == 0 or i == n_starts - 1:
+            filled = int((i + 1) / n_starts * 20)
+            bar = "[" + "|" * filled + "." * (20 - filled) + "]"
+            print(f"\r{bar} {i + 1}/{n_starts} ", end="", flush=True)
+
+        rel_perturb = np.clip(
+            np.abs(popt_cf),
+            1e-8,
+            None,
+        )  # voorkom nul-schaal
+        p0_try = popt_cf + np.random.normal(0, rel_perturb * perturb_scale)
+        result = loss_given_p0(p0_try)
+        if result.success and result.fun < best_loss:
+            best_result = result
+            best_loss = result.fun
+        if not result.success:
+            print(
+                f"⚠️ {result.message.lower().capitalize()}",
+                flush=True,
+            )
+
+    if best_result is None:
+        print(
+            "Geen geldige fit gevonden met multi-start.",
+            "\nHier de initiële curve_fit:",
+        )
+        best_result = loss_given_p0(popt_cf)
+
+    # Ontleed resultaat
+    p_opt_combined = best_result.x
+    popt = p_opt_combined[: len(popt_cf)]
+    x_opt = p_opt_combined[len(popt_cf) :]  # noqa
+
+    # Jacobiaan en foutschatting
+    eps = np.sqrt(np.finfo(float).eps)
+    J = approx_fprime(popt, lambda p: model_function(x_opt, *p), epsilon=eps)
+    residuals = Ydata - model_function(x_opt, *popt)
+    dof = max(0, len(Ydata) - len(popt))
+    s_sq = np.sum(residuals**2) / dof if dof > 0 else 1.0
+    pcov = np.linalg.pinv(J.T @ J) * s_sq
+    perr = np.sqrt(np.diag(pcov))
+
+    rating = fit_rating(model_function, Xdata, Ydata, Yerr, popt)
+    print("\npopt:", popt)
+    print("perr:", perr)
+
+    return popt, pcov, perr, rating
+
+
+def LeastSquarescurvefit(model_function, Xdata, Ydata, Xerr, Yerr, p0):
+    """Ordinary SciPy Curvefitting."""
+    # ########### Xerr is omitted  ###########
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", OptimizeWarning)
+        warnings.simplefilter("once", RuntimeWarning)
+        popt, pcov = curve_fit(
+            model_function,
+            Xdata,
+            Ydata,
+            p0=p0,
+            sigma=Yerr,
+            absolute_sigma=True,
+        )
+    perr = np.sqrt(np.diag(pcov))
+
+    rating = fit_rating(model_function, Xdata, Ydata, Yerr, popt)
+    print("\npopt:", popt)
+    print("perr:", perr)
+    return popt, pcov, perr, rating
 
 
 # %% Plotting
@@ -802,7 +1008,7 @@ def sigmaPolynoomfit(  # noqa
     regpoints=500,
     sigma=True,
     scatter=True,
-    MC_runs=1000,
+    runs=1000,
     sigma_val=3,
     full_label=True,
 ):
@@ -817,24 +1023,28 @@ def sigmaPolynoomfit(  # noqa
     Uitleg van de 3 fitmethoden:
         1) Algemene Least Squares fitmethode.
 
-        Deze methode gaat uit van GEEN onzekerheid in de x-as. Dit is veelal
-        een prima aanname om mee te werken, zie het voorbeeld bij methode 3
+        Werk goed als supersnelle datafit. Deze methode gaat uit van
+        verwaarloosbare onzekerheid in de X-as. Dit is veelal een prima
+        aanname om mee te werken.
 
         2) Monte Carlo fitmethode.
 
-        Dit gebruikt een normaalverdeling van de onzekerheid om nepdata
-        te genereren. Op basis hiervan wordt een fit gegenereerd met een
-        gaussische onzekerheid in beide parameters.
-        Werkt ook wanneer x en y direct gecorreleerd zijn
+        Dit genereert statistische nepdata/ruis in de X én Y-as op basis van de
+        puntonzekerheden en doet er een curvefit op. Van alle N fits wordt een
+        gemiddelde genomen voor het bepalen van de parameters. Een robuust
+        model; faalt zelden en is vrij snel. Met oscillatorische data kan het
+        falen. Debuggen van deze methode is goed te doen.
 
         3) Orthogonal Distance Regression
 
         Dit is een nauwkeurigere methode. Het neemt onzekerheid van beide
-        assen in weging, maar valt uiteen wanneer in de meting de assen
-        gecorreleerd zijn. Denk aan een snelheidsmeting, waarbij
-        meetonzekerheid van de positie én de tijd afhankelijk is. Dit valt
-        samen te voegen zodat er maar één de onzekerheid heeft.
-        Gebruik dan methode 1 of 2.
+        assen in weging en maakt een curve met maxima en minima. Wanneer het
+        convergeert bij een minimum is de fit gevonden. De betrouwbaarheid valt
+        wel eens tegen, dus worden er gaussisch N punten omheen gekozen om
+        lokale minima te vermijden voor het globale minimum. De methode
+        werkt speficiek erg goed bij non-lineaire modellen en kleine datasets
+        waar elke meetfout sterk meeweegt. Qua debuggen is het een black box.
+
     Parameters
     ----------
         ax    : var
@@ -865,8 +1075,9 @@ def sigmaPolynoomfit(  # noqa
             Onzekerheidsinterval (intensieve code voor CPU)
         scatter   : bool
             Errorbar plot
-        MC_runs   : int (opt)
+        runs   : int (opt)
             Aantal gegenereerde iteraties bij de Monte Carlo fit
+            Of het aantal multi-starts bij ODR (runs // 100)
         regpoints : int (opt)
             Het aantal punten voor de regressielijn, fijn om mee te spelen
             bij een zoom-in
@@ -898,6 +1109,7 @@ def sigmaPolynoomfit(  # noqa
     else:
         assert len(Ydata) == len(Xdata)
 
+    model_function = set_function_shape(func)  # zet om in lambda functie
     Xspace = np.linspace(  # Sets the range
         min(Xdata) * 1.2 if min(Xdata) < 0 else 0,
         max(Xdata) * 1.2,
@@ -908,8 +1120,8 @@ def sigmaPolynoomfit(  # noqa
     # Choose your pokémon
 
     if type_fit == 1:
-        model_function, popt, pcov, perr = LeastSquarescurvefit(
-            func,
+        popt, pcov, perr, rating = LeastSquarescurvefit(
+            model_function,
             Xdata,
             Ydata,
             Xerr,
@@ -918,24 +1130,25 @@ def sigmaPolynoomfit(  # noqa
         )
 
     elif type_fit == 2:
-        model_function, popt, pcov, perr = MonteCarlocurvefit(
-            func,
+        popt, pcov, perr, rating = MonteCarlocurvefit(
+            model_function,
             Xdata,
             Ydata,
             Xerr,
             Yerr,
             p0,
-            MC_runs,
+            runs,
         )
 
     elif type_fit == 3:
-        model_function, popt, pcov, perr = ODRcurvefit(
-            func,
+        popt, pcov, perr, rating = ODRcurvefit(
+            model_function,
             Xdata,
             Ydata,
             Xerr,
             Yerr,
             p0,
+            runs // 100,
         )
 
     #########################
@@ -944,7 +1157,7 @@ def sigmaPolynoomfit(  # noqa
         # Het onzekerheidsgebied dmv SymPy berekenen
         # Partiëel differentiëren per parameter en covariantie matrix opstellen
 
-        print("\nOnzekerheidsinterval berekenen...", end="")
+        print("Onzekerheidsinterval berekenen...", end="")
         # Dit is de sauce
         XspaceErr = uncertainty_range(func, popt, pcov, Xspace)
         # Sigma gebied
@@ -961,7 +1174,7 @@ def sigmaPolynoomfit(  # noqa
         foutmarge = abs(
             (sigma_val * XspaceErr[0]) * 100 / model_function(Xspace, popt)[0],
         )
-        print(f"\r{sigma_val} sigma foutmarge op y(0)={foutmarge:.1e}%")
+        print(f"\r{sigma_val}σ_%(x=0) = {foutmarge:.2g}%" + " " * 20)
 
     if scatter:
         # Meetpunten met hun foutmarges
@@ -988,7 +1201,7 @@ def sigmaPolynoomfit(  # noqa
         label=regressionlabel % label if full_label else regressionlabel,
     )
 
-    return popt, pcov, perr
+    return popt, perr, rating  # , pcov
 
 
 def grafiek_opmaak(
@@ -1057,7 +1270,6 @@ def grafiek_opmaak(
 
 
 # %% Main
-
 
 if __name__ == "__main__":
     import types
