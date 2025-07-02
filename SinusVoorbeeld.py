@@ -27,17 +27,15 @@ Xas_label = r"$t$ [ms]"
 Yas_label = r"$U$ [mV]"  # de $$ maakt het een math environment & cursief
 
 
-p0 = [200, 150, 1, 2000]  # a0=A; a1=periode; a2=fase; a3=translatie
-
+p0 = [200, 200, 3, 1000]  # a0=A; a1=periode; a2=fase; a3=translatie
 # De functieverwerking werkt met np. en math., tot 24 parameters.
 # Heb ook ln, log2 en log10 toegevoegd
 # Algemene vorm van sinusfunctie:
-stringfunc = "a0 * np.sin(2 * np.pi / a1 * x + 2 * np.pi * a2) + a3"
-
+stringfunc = "a0 * np.sin(2 * np.pi / a1 * x +  a2) + a3"
+# stringfunc = "a0 * np.sin(2 * np.pi / a1 * x) + a2"
 
 startpunt = 2800  # Datapunt, niet tijdstip
 eindpunt = 3000
-
 
 """
 ##### Extract data
@@ -70,7 +68,7 @@ fig1, ax1 = plt.subplots(1, 1, figsize=(10, 5))  # Creëer figuur met formaat
 
 tn.sigmaPolynoomfit(
     ax1,  # Kies de grafiek
-    2,  # Kies het model
+    3,  # Kies het model
     Xas,
     Yas,
     err_Xas,
@@ -79,7 +77,8 @@ tn.sigmaPolynoomfit(
     func=stringfunc,  # Zie definitie hierboven
     p0=p0,
     full_label=False,  # Dit houdt de legenda minimaal
-)
+    rating=True,  # Kan je gebruiken. Kans is dat je het niet wil weten
+)  # Deze data is een magneet langs een hall-sensor -> het is benaderd
 
 tn.grafiek_opmaak(
     ax1,  # Kies de grafiek
