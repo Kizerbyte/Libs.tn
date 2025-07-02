@@ -19,15 +19,16 @@ from pathlib import Path  # voor vinden van downloads folder
 
 import numpy as np
 import pandas as pd  # Voor het inlezen van de excel
-from scipy.optimize import curve_fit, OptimizeWarning
 from sympy import diff  # Voor het onzekerheidsgebied van de functie
 from sympy import lambdify
 from sympy import Matrix
 from sympy import re
-from scipy.optimize import minimize
-from scipy.optimize import approx_fprime
 from sympy import symbols
 from sympy import sympify
+from scipy.optimize import curve_fit
+from scipy.optimize import OptimizeWarning
+from scipy.optimize import minimize
+from scipy.optimize import approx_fprime
 
 
 class ManualError(Exception):
@@ -736,13 +737,29 @@ def uncertainty_range(formula, popt, pcov, Xspace):
     return XspaceErr
 
 
-def fit_rating(model_func, X, Y, Yerr, popt):
+def fit_rating(stringfunc, X, Y, Yerr, popt):
     """Beoordeel fitkwaliteit op basis van gemiddelde σ-afwijking en χ².
+
+    Uitleg van parameters:
+    Gem. σ-afwijking  :
+        Gemiddelde afstand van elk datapunt tot de fit, uitgedrukt in het
+        aantal standaarddeviaties (σ). Snelle inschatting van hoe goed de data
+        binnen de verwachte foutmarges valt.
+    χ²ₙ :
+        Statistische maat voor de ‘goedheid van fit’, genormaliseerd op
+        vrijheidsgraden. Beoordeelt of het model statistisch compatibel is met
+        de data, inclusief meetonzekerheid. LET OP: Is zeer afhankelijk van
+        exact/correcte meetfouten.
+    R² :
+        Meet welk percentage van de variantie in Y wordt verklaard door
+        het model. Vooral nuttig bij lineaire regressie of als algemene
+        indicatie bij visueel goede fits. LET OP: Misleidend bij niet-lineaire
+        fits of bij kleine datasets; gevoelig voor outliers.
 
     Parameters
     ----------
-        model_func : function
-            De gefitte functie: f(x, *popt)
+        stringfunc : function
+            De functie in string vorm "a0 * x + a1"
         X : array-like
             Onafhankelijke variabele (x-data)
         Y : array-like
@@ -756,47 +773,74 @@ def fit_rating(model_func, X, Y, Yerr, popt):
     -------
         dict met chi2, chi2_red, avg_sigma
     """
+    model_func = set_function_shape(stringfunc)
     resid = Y - model_func(X, *popt)
     norm_res = resid / Yerr
+    # R2
+    ss_res = np.sum(resid**2)
+    ss_tot = np.sum((Y - np.mean(Y)) ** 2)
+    R2 = 1 - ss_res / ss_tot
 
+    nonlinear_terms = ["sin", "cos", "tan", "exp", "log", "sqrt"]
+    is_nonlinear = any(term in stringfunc for term in nonlinear_terms)
+
+    # R2 op geldigheid checken (aka lineairiteit)
+    if not is_nonlinear:
+        r2_valid = "(Valide)"
+    elif "sin" in stringfunc and Y is not None:
+        if abs(np.mean(Y)) > 0.2 * np.std(Y):
+            r2_valid = "(Valide)"  # sinus die niet door nul gaat is wel geldig
+        else:
+            r2_valid = "(Ongeldig)"
+    else:
+        r2_valid = "(Ongeldig)"
+
+    # Chi2 en gemiddelde σ-afwijking
     chi2 = np.sum(norm_res**2)
     dof = len(Y) - len(popt)
     chi2_red = chi2 / dof if dof > 0 else np.nan
     avg_sigma = np.sqrt(np.mean(norm_res**2))
 
     # Beoordeling obv σ-afwijking
+    print("\n\nFitbeoordeling o.b.v. meetfouten en fitonzekerheid:")
     if avg_sigma < 0.5:
         print(
-            "\n⚠️  Fit te mooi om waar te zijn.",
-            "Mogelijk overfitting (teveel parameters) of te coulante fouten",
+            "⚠️  Te mooi om waar te zijn.",
+            "Mogelijk overfitting (parameters pakken de ruis op) of te",
+            "coulante meetfouten.",
         )
     elif avg_sigma <= 1.0:
-        print("\n⭐  Top fit, komt overeen met meetfouten.")
+        print("⭐  Top, hele goede match met meetfouten.")
     elif avg_sigma <= 1.5:
         print(
-            "\n✔️  Prima fit, maar valt tussen de onzekerheden.",
-            "(Te strakke meetfouten?)",
+            "✔️  Prima, maar het fit-interval valt net tussen sommige",
+            "meetonzekerheden in. Te strakke meetfouten?",
         )
-    elif avg_sigma < 2:
+    elif avg_sigma < 2.5:
         print(
-            "\n❌ Twijfelachtige fit,",
-            "slecht model of meetfouten waarschijnlijk te strak.",
+            "❌ Twijfelachtig,",
+            "incompleet fitmodel of meetfouten te klein.",
         )
     else:
         print(
-            "\n❌ Slechte fit o.b.v. meetfouten.",
-            "(Een verkeerd/onderfit model of verzonnen meetfouten?)",
+            "❌ Slecht.",
+            "Missende parameters in model of verzonnen meetfouten.",
         )
-
-    print(f"    Gem. afstand tot fit : {avg_sigma:.2g}σ")
-    print(f"    χ²                   : {chi2:.2f}")
-    print(f"    χ²_red (DOF={dof})      : {chi2_red:.2f}")
+    print(f"    Gem. puntafstand tot fit  : {avg_sigma:.2g}σ")
+    print(f"    χ²_red         (DOF={dof:03})  : {chi2_red:.2f}")
+    print(f"    R²             {r2_valid.ljust(10)} : {R2:.4f}")
 
     return {"chi2": chi2, "chi2_red": chi2_red, "avg_sigma": avg_sigma}
 
 
 def MonteCarlocurvefit(
-    model_function, Xdata, Ydata, Xerr, Yerr, p0, runs=1000
+    model_function,
+    Xdata,
+    Ydata,
+    Xerr,
+    Yerr,
+    p0,
+    runs=1000,
 ):
     """Monte Carlo Curve fitting.
 
@@ -825,12 +869,14 @@ def MonteCarlocurvefit(
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", OptimizeWarning)
             warnings.simplefilter("ignore", RuntimeWarning)
-        try:
-            popti, _ = curve_fit(model_function, Xperturbed, Yperturbed, p0=p0)
-            popt_samples[valid_count] = popti
-            valid_count += 1  # Update positie voor volgende fit
-        except (RuntimeError, TypeError, ValueError):
-            continue  # Skip fits die niet convergeren
+            try:
+                popti, _ = curve_fit(
+                    model_function, Xperturbed, Yperturbed, p0=p0
+                )
+                popt_samples[valid_count] = popti
+                valid_count += 1  # Update positie voor volgende fit
+            except (RuntimeError, TypeError, ValueError):
+                continue  # Skip fits die niet convergeren
 
     popt_samples = popt_samples[:valid_count]  # Snijd de lijst af bij skips
 
@@ -838,11 +884,7 @@ def MonteCarlocurvefit(
     pcov = np.cov(popt_samples, rowvar=False)
     perr = np.std(popt_samples, axis=0)  # De fout in de parameters
 
-    rating = fit_rating(model_function, Xdata, Ydata, Yerr, popt)
-    print("\npopt:", popt)
-    print("perr:", perr)
-
-    return popt, pcov, perr, rating
+    return popt, pcov, perr
 
 
 def ODRcurvefit(
@@ -906,6 +948,7 @@ def ODRcurvefit(
             dy = (y_model - Ydata) / Yerr
             return np.sum(dx**2 + dy**2)
 
+        # Dit is de functie die het fixt, er zijn andere methoden
         result = minimize(orthogonal_loss, p0_combined, method="L-BFGS-B")
         return result
 
@@ -920,18 +963,18 @@ def ODRcurvefit(
             bar = "[" + "|" * filled + "." * (20 - filled) + "]"
             print(f"\r{bar} {i + 1}/{n_starts} ", end="", flush=True)
 
-        rel_perturb = np.clip(
+        rel_perturb = np.clip(  # voorkom nul-schaal
             np.abs(popt_cf),
             1e-8,
             None,
-        )  # voorkom nul-schaal
+        )
         p0_try = popt_cf + np.random.normal(0, rel_perturb * perturb_scale)
         result = loss_given_p0(p0_try)
-        if result.success and result.fun < best_loss:
+        if result.success and result.fun < best_loss:  # bewaar de beste iter.
             best_result = result
             best_loss = result.fun
         if not result.success:
-            print(
+            print(  # Dit geeft de waarschuwing bij een gefaalde iteratie.
                 f"⚠️ {result.message.lower().capitalize()}",
                 flush=True,
             )
@@ -956,19 +999,14 @@ def ODRcurvefit(
     s_sq = np.sum(residuals**2) / dof if dof > 0 else 1.0
     pcov = np.linalg.pinv(J.T @ J) * s_sq
     perr = np.sqrt(np.diag(pcov))
-
-    rating = fit_rating(model_function, Xdata, Ydata, Yerr, popt)
-    print("\npopt:", popt)
-    print("perr:", perr)
-
-    return popt, pcov, perr, rating
+    return popt, pcov, perr
 
 
 def LeastSquarescurvefit(model_function, Xdata, Ydata, Xerr, Yerr, p0):
     """Ordinary SciPy Curvefitting."""
     # ########### Xerr is omitted  ###########
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", OptimizeWarning)
+        warnings.simplefilter("once", OptimizeWarning)
         warnings.simplefilter("once", RuntimeWarning)
         popt, pcov = curve_fit(
             model_function,
@@ -979,11 +1017,7 @@ def LeastSquarescurvefit(model_function, Xdata, Ydata, Xerr, Yerr, p0):
             absolute_sigma=True,
         )
     perr = np.sqrt(np.diag(pcov))
-
-    rating = fit_rating(model_function, Xdata, Ydata, Yerr, popt)
-    print("\npopt:", popt)
-    print("perr:", perr)
-    return popt, pcov, perr, rating
+    return popt, pcov, perr
 
 
 # %% Plotting
@@ -1011,6 +1045,7 @@ def sigmaPolynoomfit(  # noqa
     runs=1000,
     sigma_val=3,
     full_label=True,
+    rating=False,
 ):
     """Vul de data in een krijg een voorgekauwde fit en grafiek.
 
@@ -1084,8 +1119,12 @@ def sigmaPolynoomfit(  # noqa
         sigma_val : int (1-3)
             Breedte van het betrouwbaarheidsinterval\n
             (68.27% - 95.45% - 99.73%)
-        sigma_label : bool
+        full_label : bool
             Keuze tot het verwijderen van het label '3 sigma interval'
+        rating : bool
+            De optie tot het verkrijgen van een fitbeoordeling.
+            Gooi de uitkomst in chatgpt voor uitgebreide uitleg van je rating.
+            Belangrijk is om je fitmodel mee te geven als je dit doet.
 
     Returns
     -------
@@ -1120,7 +1159,7 @@ def sigmaPolynoomfit(  # noqa
     # Choose your pokémon
 
     if type_fit == 1:
-        popt, pcov, perr, rating = LeastSquarescurvefit(
+        popt, pcov, perr = LeastSquarescurvefit(
             model_function,
             Xdata,
             Ydata,
@@ -1130,7 +1169,7 @@ def sigmaPolynoomfit(  # noqa
         )
 
     elif type_fit == 2:
-        popt, pcov, perr, rating = MonteCarlocurvefit(
+        popt, pcov, perr = MonteCarlocurvefit(
             model_function,
             Xdata,
             Ydata,
@@ -1141,7 +1180,7 @@ def sigmaPolynoomfit(  # noqa
         )
 
     elif type_fit == 3:
-        popt, pcov, perr, rating = ODRcurvefit(
+        popt, pcov, perr = ODRcurvefit(
             model_function,
             Xdata,
             Ydata,
@@ -1150,6 +1189,11 @@ def sigmaPolynoomfit(  # noqa
             p0,
             runs // 100,
         )
+
+    if rating:
+        rating = fit_rating(func, Xdata, Ydata, Yerr, popt)
+    print("\npopt:", popt)
+    print("perr:", perr)
 
     #########################
 
@@ -1201,7 +1245,10 @@ def sigmaPolynoomfit(  # noqa
         label=regressionlabel % label if full_label else regressionlabel,
     )
 
-    return popt, perr, rating  # , pcov
+    if rating:
+        return popt, perr, (pcov, rating)
+    else:
+        return popt, perr, pcov
 
 
 def grafiek_opmaak(
