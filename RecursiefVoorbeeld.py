@@ -67,7 +67,7 @@ for i in range(metingcount):
     err_Yas = tn.MMTTi_1604_error(Yas, "U")
 
     # Plotten van data
-    [popt[i], _, perr[i]] = tn.sigmaPolynoomfit(
+    [popt[i], perr[i], _] = tn.sigmaPolynoomfit(
         ax1,
         2,
         Xas,
