@@ -7,9 +7,10 @@ Redenen waarom dit een chille module is
 * Super simpele opmaak van grafieken
 * Data fitten door middel van een string (e.g. "a0 * x + a1") met een praktisch onbeperkt aantal parameters
 * Onzekerheidsinterval rondom de fitfunctie ongeacht de functievorm (ook sinusvorm).
-* 3 soorten curvefits (NLS, NLS met Monte Carlo methode, ODR)
+* 3 soorten curvefits (Nonlinear Least Squares, NLS met Monte Carlo methode, Orthogonal Distance Regression)
 * Snelle workflow door gegeneraliseerde code en mogelijkheid tot bijna-live databewerking in Excel.
-* De code mansplaint vrijwel altijd wat voor een fout je hebt gemaakt
+* Prima geoptimaliseerd voor snelheid.
+* De code mansplaint vrijwel altijd wat voor een fout je hebt gemaakt. Oorzaak achterhalen via de documentatie is makkelijk.
 
 Uitleg om het werkend te krijgen.
 1. Via de zoekfunctie op je computer, open Anaconda Prompt.
@@ -26,9 +27,11 @@ Dat is dan je standaard Python folder. (Of neem het mapje telkens mee, een vrije
 
 Ik heb geprobeerd de documentatie zo compleet mogelijk te maken, waarbij de netheid met de jaren is toegenomen.
 Sommige stukken code komen van bijv. Stack Overflow dus dat commentaar is Engels.
-Veel soorten errors worden opgevangen en aan je uitgelegd, tenzij de errormsg zelf voldoende duidelijk is.
+Veel soorten errors worden opgevangen en aan je uitgelegd, met een debug tree zodat je kan achterhalen waar de fout vandaan komt.
 
-Als je wilt weten welke functies er in het bestand zitten, run tn.py voor een lijst of 
+Lees de documentatie van sigmaPolynoomfit() goed door! Dan weet je wat 'ie kan.
+
+Als je wilt weten welke functies er in het bestand zitten run tn.py, of per functie specifiek doe
 ```console
 help(tn.<functie>)
 ```
