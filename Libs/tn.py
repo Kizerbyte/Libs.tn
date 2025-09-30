@@ -56,63 +56,76 @@ class ManualError(Exception):
 """
 
 
-def lees_bestand(file, sheet="Sheet1", cols=["U", "I"], debug=False):
+def vind_bestand(file, priority_paths=None):
     """
-    Kolommen uit een excelsheet halen en omzetten in een werkbare dictionary.
+    Standalone universele bestandvinder.
 
     Parameters
     ----------
     file : str
-        Bestandsnaam die zich op hetzelfde C:/ pad bevindt
-        óf in C:/User/<username>/Downloads/
-    sheet : str
-        Default is 'Sheet1'
-    cols : str, list
-        Één of meer kolomtitels (Default = ['U', 'I'])
-    debug : bool
-        Zet True als je de volledige pandas dataframe wilt van de excel
+        Bestandsnaam.
+    priority_paths : list
+        Extra folders om als eerst te doorzoeken (relatief pad of volledig pad)
+        ["images","G:/Data"] bijvoorbeeld kan beide
 
     Returns
     -------
-    Kolommen : dict
-        Opgevraagde kolommen als één numpy dictionary
-    Excel : df (wanneer debug=True)
-        De volledige pandas dataframe van de excel en de NaN-count per kolom
+    Path
+        Volledig pad naar het gevonden bestand.
     """
-
-    def vind_bestand(path, file):  # Return dataframe alleen indien gevonden
-        p = Path(path / file)
-        if p.is_file():
-            Excel = pd.read_excel(p, sheet)
-            print(f"\nBestand gevonden! {path}\\{file} ")
-            print(
-                "Zoekend naar kolom"
-                + ("men" if len(cols) > 1 else "")  # Is mooi
-                + f" {cols} in '{sheet}'...",
-                end="",
-            )
-            if not debug:
-                return zoek_kolom(Excel, cols)
-            else:
-                return zoek_kolom(Excel, cols, debug=True), Excel
+    priority_paths = priority_paths or ()  # Dit fixt None als error
 
     pathlist = [
+        *(Path(p).expanduser() for p in priority_paths),  # Voorkeursmap
         Path(sys.argv[0]).resolve().parent,  # Folder van script dat m oproept
         Path.home() / "Downloads",  # Donwloadsfolder
         Path.cwd(),  # Working directory (zie de path rechtsbovenin in Spyder)
     ]
-
     for pad in pathlist:
-        Excel_df = vind_bestand(pad, file)
-        if Excel_df is not None:
-            return Excel_df
-
-    # Gaat verder bij falen van pathfinding
-    print(
-        "\nBestand niet gevonden in scriptfolder, downloadsfolder of working",
-        f"directory.\nWorking directory: {Path.cwd()}\nAborted script.",
+        betandslocatie = Path(pad / file)
+        if betandslocatie.is_file():
+            print(betandslocatie)
+            return betandslocatie.resolve()
+    raise FileNotFoundError(
+        f"'{file} niet gevonden'. Gezocht in: "
+        + ", ".join(str(".../" + p.name) for p in pathlist)
     )
-    sys.exit()
+
+
+def extract_ThorLabs(csv_bestand):
+    """Stript de parameterdata van de dataset.
+
+    Werkt met de ThorLabs OPM software
+
+    Parameters
+    ----------
+    csv_bestand : str
+        Bestandsnaam die zich op hetzelfde C:/ pad bevindt
+        óf in C:/User/<username>/Downloads/
+
+    Returns
+    -------
+    csv_dict : dict
+        Elke kolom als een list
+    """
+    from io import StringIO
+
+    bestandslocatie = vind_bestand(csv_bestand)
+    with open(bestandslocatie, encoding="utf-8", errors="ignore") as file:
+        lines = file.readlines()
+
+    for i, line in enumerate(lines):
+        if "samples" in line.lower():
+            lines = lines[i:]
+            csv_string = StringIO("".join(lines))
+            # Extract df als dict met nested lists
+            csv_dict = pd.read_csv(csv_string).to_dict(orient="list")
+            break
+    else:
+        print("Keyword 'samples' niet gevonden.")
+        return lines
+
+    return csv_dict
 
 
 def zoek_kolom(dataframe, kolommen, debug=False):
@@ -153,6 +166,54 @@ def zoek_kolom(dataframe, kolommen, debug=False):
             sys.exit()
     print("\u2705")  # checkmark
     return newdict
+
+
+def lees_bestand(excel_file, sheet="Sheet1", cols=["U", "I"], debug=False):
+    """
+    Kolommen uit een excelsheet halen en omzetten in een werkbare dictionary.
+
+    Parameters
+    ----------
+    file : str
+        Bestandsnaam die zich op hetzelfde C:/ pad bevindt
+        óf in C:/User/<username>/Downloads/
+    sheet : str
+        Default is 'Sheet1'
+    cols : str, list
+        Één of meer kolomtitels (Default = ['U', 'I'])
+    debug : bool
+        Zet True als je de volledige pandas dataframe wilt van de excel
+
+    Returns
+    -------
+    Kolommen : dict
+        Opgevraagde kolommen als één numpy dictionary
+    Excel : df (wanneer debug=True)
+        De volledige pandas dataframe van de excel en de NaN-count per kolom
+    """
+
+    excel_path = vind_bestand(excel_file)  # Nu een wrapper!
+    Excel_df = pd.read_excel(excel_path, sheet)
+    print(f"\nBestand gevonden! {excel_path}")
+
+    if isinstance(cols, str):
+        cols = [cols]
+    print(
+        "Zoekend naar kolom"
+        + ("men" if len(cols) > 1 else "")  # Is mooi
+        + f" {cols} in '{sheet}'...",
+        end="",
+    )
+    if debug:
+        return zoek_kolom(Excel_df, cols, debug=True), Excel_df
+    else:
+        return zoek_kolom(Excel_df)
+        # Gaat verder bij falen van pathfinding
+    print(
+        "\nBestand niet gevonden in scriptfolder, downloadsfolder of working",
+        f"directory.\nWorking directory: {Path.cwd()}\nAborted script.",
+    )
+    sys.exit()
 
 
 # %% Opmaak
@@ -245,7 +306,6 @@ def Reglabelmaker(formula, popt, perr, full_label=True):
         replace_with_values=True,
         popt=[sci_error(p, e) for p, e in zip(popt, perr)],
     )
-    # try:
     rstring_formula = (
         re2.sub(
             r"log\(",
@@ -658,6 +718,27 @@ def MMTTi_1604_error(meetdata, UI="U"):
         )
 
 
+def ThorLabs_timestamp_fix(csv_dict):
+    """Vertaalt de timedate van ThorLabs OPM naar een tijdsverloop.
+    Parameters
+    ----------
+    csv_dict : dict
+
+    Returns
+    -------
+    csv_dict : dict
+        Met verlopen tijd toegevoegd
+    """
+    for key in csv_dict.keys():
+        if "time" in key.lower():
+            td = pd.to_timedelta(pd.Series(csv_dict[key]))  # 'hh:mm:ss.xxx'
+            secs = (td - td.iloc[0]).dt.total_seconds()  # start at 0 s
+            csv_dict["Time (s)"] = secs.tolist()
+            print("'Time (s)' toegevoegd")
+            break
+    return csv_dict
+
+
 # %% Dataverwerking subfuncties
 """
 #################
@@ -871,7 +952,10 @@ def MonteCarlocurvefit(
             warnings.simplefilter("ignore", RuntimeWarning)
             try:
                 popti, _ = curve_fit(
-                    model_function, Xperturbed, Yperturbed, p0=p0
+                    model_function,
+                    Xperturbed,
+                    Yperturbed,
+                    p0=p0,
                 )
                 popt_samples[valid_count] = popti
                 valid_count += 1  # Update positie voor volgende fit
@@ -1255,44 +1339,64 @@ def grafiek_opmaak(
     ax,
     xlabel="x",
     ylabel="y",
-    legendlocation=4,
+    legendloc=4,
     xlim=None,
     ylim=None,
+    xticks=False,
+    yticks=False,
+    integerticks=(False, False),
     grid=True,
+    minorgrid=False,
     ncol=2,
 ):
-    r"""Doet wat het zegt. Standaard opmaakset voor grafieken.
+    r"""Standaard opmaakset voor grafieken.
 
     Is NIET inclusief plt.plot()
 
+    Zorgt voor gemakkelijke consistentie in assenlabels, legendapositie,
+    grid en ticks. Scheelt veel tijd bij het maken van grafieken.
+    De standaard instellingen zijn voldoende voor een snelle meting
+    Dus grafiek_opmaak(ax1) is voldoende
+
     Parameters
     ----------
-        ax : var
-            axessubplot (ax1,ax2,...etc.).
-        xlabel : r-str
-            Voorbeeld: r"$\frac{1}{4\pi^2m}  \[\frac{1}{kg}\]$".
-            Of: r"$V$ [m$^3$]"
-        ylabel : r-str
-        legendlocation : int, str
-            Default is rechtsonder, google matplotlib.pyplot.legend(loc='x').
-            5 is eigen additie voor de legenda onder de grafiek.
-        xlim : list
-
-        ylim : list
-
-        grid : bool
-
-        ncol : int
-            Aantal kolommen bij legendlocation = 5
+    ax : matplotlib.axes.Axes
+        (ax1, ax2, ..., etc.)
+    xlabel : str
+    ylabel : str
+    Legendloc : int of str
+        Positie van de legenda met als eigen toevoeging `legendloc=5`.
+    xlim : tuple of list
+        [min, max].
+    ylim : tuple of list
+        [min, max].
+    xticks : (major) of (major, minor)
+        Interval van major en minor ticks op de x-as.
+    yticks : (major) of (major, minor)
+        Interval van major en minor ticks op de y-as.
+    integerticks : (bool, bool)
+        Forceert integer ticks: (x-as, y-as).
+    grid : bool
+        Grid aan of uit.
+    minorgrid : bool
+        Een grid voor de minor ticks.
+    ncol : int
+        Aantal kolommen in de legenda wanneer legendloc=5.
 
     Returns
     -------
-        None
+    None
     """
+    from matplotlib.ticker import (
+        MaxNLocator,
+        MultipleLocator,
+        AutoMinorLocator,
+    )
+
     ax.set_xlabel(xlabel, labelpad=5, fontsize=14)
     ax.set_ylabel(ylabel, labelpad=5, rotation=90, fontsize=14)
-    if legendlocation != 5:
-        ax.legend(loc=legendlocation)
+    if legendloc != 5:
+        ax.legend(loc=legendloc)
     else:
         # Shrink current axis' height by 10% on the bottom
         box = ax.get_position()
@@ -1310,10 +1414,27 @@ def grafiek_opmaak(
         )
     if grid:
         ax.grid()
-    if xlim is not None:
+    if xlim:
         ax.set_xlim(xlim)
-    if ylim is not None:
+    if ylim:
         ax.set_ylim(ylim)
+    # Major/minor ticks
+    if xticks:
+        ax.xaxis.set_major_locator(MultipleLocator(xticks[0]))
+        if len(xticks) > 1:
+            ax.xaxis.set_minor_locator(AutoMinorLocator(xticks[1]))
+    if yticks:
+        ax.yaxis.set_major_locator(MultipleLocator(yticks[0]))
+        if len(yticks) > 1:
+            ax.yaxis.set_minor_locator(AutoMinorLocator(yticks[1]))
+    if minorgrid:
+        ax.grid(which="major", linewidth=0.8)
+        ax.grid(which="minor", linestyle=":", linewidth=0.5)
+    # Force integer ticks if requested
+    if integerticks[0]:
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    if integerticks[1]:
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
 
 
 # %% Main
