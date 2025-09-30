@@ -2,6 +2,7 @@
 Automatische Excel data extractie en dataverwerking voor de TN studie aan de HHS Delft. De code is samengekomen met de jaren en telkens verbeterd.
 Redenen waarom dit een chille module is:
 * Inline MMTTi 1604 meetfoutverwerking
+* ThorLabs OPM metingen uitlezen
 * Afronding o.b.v. onzekerheid (in r-string opmaak)
 * Super simpele opmaak van grafieken inclusief preset
 * Data fitten door middel van een string zoals `"a0 *(1 - np.exp(-(x+a1)/a2))"` t/m 23 parameters
