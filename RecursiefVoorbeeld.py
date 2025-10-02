@@ -2,15 +2,14 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 from Libs import tn
 
 plt.close("all")  # Kan je weghalen, kan je laten, vrije keuze.
 
 """
-##### Variabelen
-###############################################################################
-###############################################################################
+##### Variabelen #############################################################
 """
 # Dit bestand voegt automatisch de meetonzekerheid van de MMTTi-1604 toe.
 # Alleen meetdata is benodigd, van twee assen.
@@ -37,9 +36,7 @@ fitfunctie = "a0 *(1 - np.exp(-(x+a1)/a2))-9.09"
 c = ["b", "orange", "r", "g", "black", "purple", "brown", "pink"]
 
 """
-##### Extract en plot data recursief
-###############################################################################
-###############################################################################
+##### Extract en plot data recursief #########################################
 """
 
 fig1, ax1 = plt.subplots(1, 1, figsize=(12, 6))  # Creëer figuuromgeving
@@ -47,14 +44,16 @@ fig1, ax1 = plt.subplots(1, 1, figsize=(12, 6))  # Creëer figuuromgeving
 popt = np.zeros((metingcount, len(p0)))  # Pre-allocation voor referenties
 perr = np.zeros((metingcount, len(p0)))
 
+_path = tn.vind_bestand(Excel_bestand)  # Buiten de loop, voorkomt onnodig
+_dataframe = pd.read_excel(_path, Sheet)  # herhalen van code
+
 for i in range(metingcount):
     Xas = f"{X_as}{i+1}"  # Automatische nummertoevoeging en behoud X_as
     Yas = f"{Y_as}{i+1}"
 
     # Data-extractie
-    columns = tn.lees_bestand(  # Selecteer kolommen en maak een grote dict.
-        Excel_bestand,
-        Sheet,
+    columns = tn.zoek_kolom(  # Selecteer kolommen en maak een grote dict.
+        _dataframe,
         [Xas, Yas],
     )
 
@@ -83,9 +82,7 @@ for i in range(metingcount):
 
 
 """
-##### Plot data
-###############################################################################
-###############################################################################
+##### Plot data ##############################################################
 """
 
 ax1.set_title(r"Voorbeeldtitel $U_{h}$ (gain) met tijd")
