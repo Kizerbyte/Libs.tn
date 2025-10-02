@@ -14,7 +14,6 @@ import re as re2  # naming overlap (extracting_variables functie)
 import string  # extracting_variables
 import sys  # Voor de abort functie bij een error
 import warnings  # Voor error handling van de ODR fit
-from pathlib import Path  # voor vinden van downloads folder
 
 
 import numpy as np
@@ -73,6 +72,8 @@ def vind_bestand(file, priority_paths=None):
     Path
         Volledig pad naar het gevonden bestand.
     """
+    from pathlib import Path  # voor vinden van downloads folder
+
     priority_paths = priority_paths or ()  # Dit fixt None als error
 
     pathlist = [
@@ -88,7 +89,7 @@ def vind_bestand(file, priority_paths=None):
             return betandslocatie.resolve()
     raise FileNotFoundError(
         f"'{file} niet gevonden'. Gezocht in: "
-        + ", ".join(str(".../" + p.name) for p in pathlist)
+        + ", ".join(str(".../" + p.name) for p in pathlist),
     )
 
 
@@ -128,7 +129,7 @@ def extract_ThorLabs(csv_bestand):
     return csv_dict
 
 
-def zoek_kolom(dataframe, kolommen, debug=False):
+def zoek_kolom(dataframe, kolommen):
     """
     Kolommen vinden in een panda's df en vertalen naar Numpy, met errorfunctie.
 
@@ -136,34 +137,29 @@ def zoek_kolom(dataframe, kolommen, debug=False):
     ----------
     dataframe : df
         De dataframe waarin gezocht moet worden
-    kolommen : str
+    kolommen : str, list
         kolomtitel(s) die gezocht moet(en) worden
-    debug : bool
-        Zet True als je de wilt weten hoeveel NaNs
 
     Returns
     -------
     newdict : dict
-        met specifiek die kolommen
-    print (wanneer debug=True)
-        NaN count
+        met specifiek die kolommen als numpy array
     """
+    if isinstance(kolommen, str):  # voor als je de list vergeten bent
+        kolommen = [kolommen]
+    print(
+        "Zoekend naar kolom"
+        + ("men" if len(kolommen) > 1 else "")  # Is mooi
+        + f": {", ".join(kolommen)}...",
+        end="",
+    )
     newdict = {}
     for col in kolommen:
         try:
-            # Zoek de kolom met metingen en creëer een dict entry met deze data
+            # Zoek de kolom en creëer een dict entry met deze data
             newdict.update({col: dataframe[col].dropna().to_numpy()})
-            if debug and (dataframe[col].isnull().values.sum() != 0):
-                print(
-                    "\n-debug- Kolom '{}' bevat {} NaN(s)".format(
-                        col,
-                        dataframe[col].isnull().values.sum(),
-                    ),
-                    end="",
-                )
         except KeyError:
-            print(f"\n\nKolom '{col}' niet gevonden!")
-            sys.exit()
+            raise KeyError(f"Kolom '{col}' niet gevonden!")
     print("\u2705")  # checkmark
     return newdict
 
@@ -181,39 +177,22 @@ def lees_bestand(excel_file, sheet="Sheet1", cols=["U", "I"], debug=False):
         Default is 'Sheet1'
     cols : str, list
         Één of meer kolomtitels (Default = ['U', 'I'])
-    debug : bool
-        Zet True als je de volledige pandas dataframe wilt van de excel
 
     Returns
     -------
-    Kolommen : dict
+    Kolommen : dict (debug=False)
         Opgevraagde kolommen als één numpy dictionary
-    Excel : df (wanneer debug=True)
-        De volledige pandas dataframe van de excel en de NaN-count per kolom
+    óf
+    Excel : df (debug=True)
+        De volledige pandas dataframe van de excel
     """
-
     excel_path = vind_bestand(excel_file)  # Nu een wrapper!
     Excel_df = pd.read_excel(excel_path, sheet)
-    print(f"\nBestand gevonden! {excel_path}")
-
-    if isinstance(cols, str):
-        cols = [cols]
-    print(
-        "Zoekend naar kolom"
-        + ("men" if len(cols) > 1 else "")  # Is mooi
-        + f" {cols} in '{sheet}'...",
-        end="",
-    )
+    print(f"({sheet.capitalize()}) ", end="")
+    bestands_dict = zoek_kolom(Excel_df, cols)
     if debug:
-        return zoek_kolom(Excel_df, cols, debug=True), Excel_df
-    else:
-        return zoek_kolom(Excel_df)
-        # Gaat verder bij falen van pathfinding
-    print(
-        "\nBestand niet gevonden in scriptfolder, downloadsfolder of working",
-        f"directory.\nWorking directory: {Path.cwd()}\nAborted script.",
-    )
-    sys.exit()
+        return Excel_df
+    return bestands_dict
 
 
 # %% Opmaak
@@ -259,7 +238,7 @@ def sci_error(number, sig_number, sci_bucket=[4, -2]):
             n = 1
             sigpow = math.floor(np.log10(abs(sig_number)))
         except OverflowError:
-            raise ManualError(
+            raise OverflowError(
                 "Afrondingsfout: Er is 'inf' gegeven als",
                 ("meetwaarde" if n == 0 else "onzekerheid"),
                 "bij afronding. Check de inputdata voor deze functie. \n",
@@ -720,6 +699,7 @@ def MMTTi_1604_error(meetdata, UI="U"):
 
 def ThorLabs_timestamp_fix(csv_dict):
     """Vertaalt de timedate van ThorLabs OPM naar een tijdsverloop.
+
     Parameters
     ----------
     csv_dict : dict
