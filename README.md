@@ -1,15 +1,25 @@
 # Libs.tn
 Automatische Excel data extractie en dataverwerking voor de TN studie aan de HHS Delft. De code is samengekomen met de jaren en telkens verbeterd.
-Redenen waarom dit een chille module is:
-* Inline MMTTi 1604 meetfoutverwerking
-* ThorLabs OPM metingen uitlezen
+In drie delen waarom dit een chille module is.
+
+Omtrent meetdata verkrijgen:
+* Inline MMTTi 1604 meetfouttoevoeging
+* Inline ThorLabs PM100D/S120C meetfouttoevoeging
+* Python aansturing PM100D
+
+Omtrent het importeren en visualiseren van meetdata:
+* Het automatisch vinden van Excel bestanden, zelfs met relative-folderverwijzing
+* Snelle workflow door gegeneraliseerde code en mogelijkheid tot bijna-live databewerking parallel aan het Excel bestand.
+* Super simpele opmaakfunctie van grafieken inclusief preset
+
+Omtrent data analyse:
 * Afronding o.b.v. onzekerheid (in r-string opmaak)
-* Super simpele opmaak van grafieken inclusief preset
 * Data fitten door middel van een string zoals `"a0 *(1 - np.exp(-(x+a1)/a2))"` t/m 23 parameters
 * 3σ onzekerheidsinterval rondom de fitfunctie ongeacht de functievorm (inclusief nonlineair).
 * 3 soorten curvefits (Nonlinear Least Squares, NLS met Monte Carlo methode, Orthogonal Distance Regression met quasi globaal minimum)
-* Snelle workflow door gegeneraliseerde code en mogelijkheid tot bijna-live databewerking parallel met Excel.
-* Prima geoptimaliseerd voor snelheid.
+
+Extra:
+* Allemaal prima geoptimaliseerd voor snelheid en modulariteit.
 * De code mansplaint vrijwel altijd wat voor een fout je hebt gemaakt. Oorzaken achterhalen via de documentatie is makkelijk.
 
 Uitleg om het werkend te krijgen.
