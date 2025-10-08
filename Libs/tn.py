@@ -73,12 +73,26 @@ def vind_bestand(file, priority_paths=None):
         Volledig pad naar het gevonden bestand.
     """
     from pathlib import Path  # voor vinden van downloads folder
+    import __main__
+
+    script_dir = Path(__main__.__file__).resolve().parent
 
     priority_paths = priority_paths or ()  # Dit fixt None als error
+    if isinstance(priority_paths, str):  # Dit fixt string als error
+        priority_paths = [priority_paths]
 
+    priority_paths = (
+        (
+            (script_dir / p).expanduser().resolve()  # Path relatief aan script
+            if not Path(p).is_absolute()  # Absoluut path
+            else Path(p).expanduser().resolve()  # Relatief aan cwd
+        )
+        for p in priority_paths
+        if str(p)  # Boolean
+    )
     pathlist = [
-        *(Path(p).expanduser() for p in priority_paths),  # Voorkeursmap
-        Path(sys.argv[0]).resolve().parent,  # Folder van script dat m oproept
+        *priority_paths,  # Voorkeursmap
+        script_dir,  # Folder van script dat m oproept
         Path.home() / "Downloads",  # Donwloadsfolder
         Path.cwd(),  # Working directory (zie de path rechtsbovenin in Spyder)
     ]
@@ -88,8 +102,8 @@ def vind_bestand(file, priority_paths=None):
             print(betandslocatie)
             return betandslocatie.resolve()
     raise FileNotFoundError(
-        f"'{file} niet gevonden'. Gezocht in: "
-        + ", ".join(str(".../" + p.name) for p in pathlist),
+        f"'{file}' niet gevonden.\nGezocht in:\n"
+        + f"\n".join(str(p) for p in pathlist),
     )
 
 
@@ -145,12 +159,12 @@ def zoek_kolom(dataframe, kolommen):
     newdict : dict
         met specifiek die kolommen als numpy array
     """
-    if isinstance(kolommen, str):  # voor als je de list vergeten bent
+    if isinstance(kolommen, str):  # Voor als je de list vergeten bent
         kolommen = [kolommen]
     print(
         "Zoekend naar kolom"
         + ("men" if len(kolommen) > 1 else "")  # Is mooi
-        + f": {", ".join(kolommen)}...",
+        + f": {', '.join(kolommen)}...",
         end="",
     )
     newdict = {}
@@ -688,7 +702,7 @@ def MMTTi_1604_error(meetdata, UI="U"):
                 {"err_" + kolom: np.zeros(len(meetdata[kolom]))},
             )
             for i, meting in enumerate(meetdata[kolom]):
-                meetdata_err["err_" + kolom][i] = MMTTi_error(meting, kolom)
+                meetdata_err["err_" + kolom][i] = MMTTi_error(meting, UI)
         return meetdata_err
     else:
         raise ManualError(
@@ -1282,7 +1296,7 @@ def sigmaPolynoomfit(  # noqa
         foutmarge = abs(
             (sigma_val * XspaceErr[0]) * 100 / model_function(Xspace, popt)[0],
         )
-        print(f"\r{sigma_val}σ_%(x=0) = {foutmarge:.2g}%" + " " * 20)
+        print(f"\r{sigma_val}σ_%(x=0) = {foutmarge:.2g}%" + " " * 20, f"\n")
 
     if scatter:
         # Meetpunten met hun foutmarges
@@ -1343,7 +1357,9 @@ def grafiek_opmaak(
     ax : matplotlib.axes.Axes
         (ax1, ax2, ..., etc.)
     xlabel : str
+
     ylabel : str
+
     Legendloc : int of str
         Positie van de legenda met als eigen toevoeging `legendloc=5`.
     xlim : tuple of list
@@ -1398,7 +1414,7 @@ def grafiek_opmaak(
         ax.set_xlim(xlim)
     if ylim:
         ax.set_ylim(ylim)
-    # Major/minor ticks
+    # Major en minor ticks
     if xticks:
         ax.xaxis.set_major_locator(MultipleLocator(xticks[0]))
         if len(xticks) > 1:
@@ -1410,7 +1426,7 @@ def grafiek_opmaak(
     if minorgrid:
         ax.grid(which="major", linewidth=0.8)
         ax.grid(which="minor", linestyle=":", linewidth=0.5)
-    # Force integer ticks if requested
+    # Forceeer integer ticks
     if integerticks[0]:
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     if integerticks[1]:
